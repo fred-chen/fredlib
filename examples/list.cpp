@@ -95,16 +95,16 @@ void intrusive_safe_list_demo() {
     IntrusiveSafeList<MyDataType, listHook, &MyDataType::hook> list;
     list.push_back(data);
     data = list.pop_front();
-    std::cout << "data of MyDataType is %d" << data.data << std::endl;  // 5
+    std::cout << "data of MyDataType is " << data.data << std::endl;  // 5
 
     /// you can also use iterator to traverse a IntrusiveSafeList
     list.push_back(data);
     for (auto& v : list) {
-        std::cout << "data of MyDataType is %d" << v.data << std::endl;
+        std::cout << "data of MyDataType is " << v.data << std::endl;
     }
 
     std::all_of(std::begin(list), std::end(list), [](MyDataType& v) {
-        std::cout << "data of MyDataType is %d" << v.data << std::endl;
+        std::cout << "data of MyDataType is " << v.data << std::endl;
         return true;
     });
 }

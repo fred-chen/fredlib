@@ -1,6 +1,8 @@
 /*
  * Copyright (c) 2022 Fred Chen
  *
+ * This file includes implementation of intrusive linked lists.
+ *
  * Created on Thu Sep 29 2022
  * Author: Fred Chen
  */

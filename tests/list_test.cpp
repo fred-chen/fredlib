@@ -190,14 +190,14 @@ TEST_CASE("SafeList Iterator", "list") {
 
     // STL algorithms
     // any of the nodes in list should be node1 or node2 or node3
-    REQUIRE(any_of(begin(list), end(list),
+    REQUIRE(std::any_of(std::begin(list), std::end(list),
                    [&node1, &node2, &node3](listHook& node) {
                        return &node != &node1 && &node != &node2 &&
                               &node != &node3;
                    }) == false);
     // locate a node in list
-    iter = find_if(
-        begin(list), end(list),
+    iter = std::find_if(
+        std::begin(list), std::end(list),
         [&node1, &node2, &node3](listHook& node) { return &node == &node2; });
     REQUIRE(&(*iter) == &node2);
     REQUIRE(iter->next == &node3);
@@ -336,13 +336,13 @@ TEST_CASE("IntrusiveSafeList Iterator", "list") {
     // STL algorithms
     // any of the nodes in list should be node1 or node2 or node3
     REQUIRE(
-        any_of(begin(list), end(list), [&node1, &node2, &node3](DataObj& node) {
+        std::any_of(std::begin(list), std::end(list), [&node1, &node2, &node3](DataObj& node) {
             return (DataObj*)&node != &node1 && (DataObj*)&node != &node2 &&
                    (DataObj*)&node != &node3;
         }) == false);
 
     // locate a node in list
-    iter = find_if(begin(list), end(list),
+    iter = std::find_if(std::begin(list), std::end(list),
                    [&node1, &node2, &node3](DataObj& node) {
                        return (DataObj*)&node == &node2;
                    });

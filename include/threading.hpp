@@ -1,6 +1,9 @@
 /*
  * Copyright (c) 2022 Fred Chen
  *
+ * This file includes implementations of multi-threading facilities like
+ * syncpoint, waiter, pauser, thread pool etc.
+ *
  * Created on Thu Sep 29 2022
  * Author: Fred Chen
  */
@@ -202,7 +205,8 @@ class ThreadControl : public SyncPoint, FanInPoint, PausePoint {};
 typedef void (*thread_routine)(void* arg, ThreadControl& tc, bool& result);
 using ThreadRoutine = std::function<thread_routine>;
 /**
- * @brief a thread pool that run ThreadRoutine(s)
+ * @brief A thread pool that run ThreadRoutine(s).
+ *        WorkerThreads is meant for some long term tasks.
  */
 class WorkerThreads {};
 

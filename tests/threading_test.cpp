@@ -9,6 +9,7 @@
 #include "safe_stdout.hpp"
 
 using namespace FRED;
+using namespace std;
 
 /**
  * put threads in sync
