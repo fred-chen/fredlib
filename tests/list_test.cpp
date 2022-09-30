@@ -99,6 +99,16 @@ TEST_CASE("SafeList", "list") {
     REQUIRE(list.mTail == &node3);
     REQUIRE(list.size() == 3);
 
+    list.pop_front();
+    list.pop_front();
+    list.pop_front();
+    REQUIRE(list.size() == 0);
+    REQUIRE(list.empty());
+
+    list.push_back(&node1);
+    list.push_back(&node2);
+    list.push_back(&node3);
+
     listHook* temp =
         list.pop_front();  // node1 popped, header->node2-node3 left
     REQUIRE(temp == &node1);
@@ -330,6 +340,7 @@ TEST_CASE("IntrusiveSafeList Iterator", "list") {
             return (DataObj*)&node != &node1 && (DataObj*)&node != &node2 &&
                    (DataObj*)&node != &node3;
         }) == false);
+
     // locate a node in list
     iter = find_if(begin(list), end(list),
                    [&node1, &node2, &node3](DataObj& node) {

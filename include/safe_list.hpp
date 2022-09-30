@@ -188,6 +188,9 @@ public:
         Iterator(SafeList* parent = nullptr) : mParent(parent) {
             mCurrent = mParent ? mParent->mHead
                                : nullptr;  // create a null iterator by default
+            if (!mCurrent) {
+                mParent = nullptr;  // invalidate the iterator if list is empty
+            }
         }
         Iterator(const Iterator& iter) {
             mCurrent = iter.mCurrent;
