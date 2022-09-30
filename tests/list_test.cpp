@@ -143,6 +143,56 @@ TEST_CASE("SafeList", "list") {
     REQUIRE(list.size() == 3);
 }
 
+TEST_CASE("SafeList Iterator", "list") {
+    SafeList<listHook> list;
+
+    listHook node1;
+    listHook node2;
+    listHook node3;
+
+    list.push_back(&node1);
+    list.push_back(&node2);
+    list.push_back(&node3);  // header->node1-node2-node3
+
+    // iterator resolvation
+    auto iter = list.begin();  // iter->node1
+    REQUIRE(iter->next == &node2);
+    REQUIRE(&(*iter) == &node1);  // deref iter should return node1 object
+
+    // traverse
+    REQUIRE((iter++)->next ==
+            &node2);  // iter++ returns a new iterator pointing to node1
+    REQUIRE(iter->next == &node3);       // iter itself is pointing to node2
+    REQUIRE((++iter)->next == nullptr);  // iter->node3
+    REQUIRE(&(*iter) == &node3);      // deref iter should return node3 object
+    REQUIRE(&(*(--iter)) == &node2);  // --iter put it to previous position
+    REQUIRE(
+        &(*(iter--)) ==
+        &node2);  // iter-- returns a new iterator pointing to current position
+    REQUIRE(&(*iter) ==
+            &node1);  // iter itself is pointing to previous location
+
+    // boundaries
+    REQUIRE((--iter) ==
+            SafeList<listHook>::Iterator());  // cross the beginning boundary,
+                                              // iter is invalidated
+    REQUIRE(iter.is_valid() == false);
+
+    // STL algorithms
+    // any of the nodes in list should be node1 or node2 or node3
+    REQUIRE(any_of(begin(list), end(list),
+                   [&node1, &node2, &node3](listHook& node) {
+                       return &node != &node1 && &node != &node2 &&
+                              &node != &node3;
+                   }) == false);
+    // locate a node in list
+    iter = find_if(
+        begin(list), end(list),
+        [&node1, &node2, &node3](listHook& node) { return &node == &node2; });
+    REQUIRE(&(*iter) == &node2);
+    REQUIRE(iter->next == &node3);
+}
+
 TEST_CASE("IntrusiveSafeList", "list") {
     const int numElements = 100;
     struct DataObj {
@@ -157,20 +207,49 @@ TEST_CASE("IntrusiveSafeList", "list") {
         listHook hook;
     };
 
+    DataObj obj1;
+    obj1.data = 1;
+    DataObj2 obj2;
+    obj2.data1 = 2.0;
+
     IntrusiveSafeList<DataObj, listHook, &DataObj::hook>
         list;  // a Intrusive List
     IntrusiveSafeList<DataObj2, listHook, &DataObj2::hook>
         list2;  // a Intrusive List
+
+    list.push_front(obj1);
+    list2.push_back(obj2);
 
     // offset correctness
     REQUIRE(list.mOffset ==
             4 + 4 + 8);  // sizeof(int) + 4B padding + sizeof(double)
     REQUIRE(list2.mOffset ==
             40 + 8);  // sizeof(int) * 10 + 0 padding + sizeof(double)
+    REQUIRE(&(list.pop_back()) == &obj1);
+    REQUIRE(&(list2.pop_front()) == &obj2);
 
+    REQUIRE(list.size() == 0);
+    REQUIRE(list2.size() == 0);
+    REQUIRE(list.empty());
+    REQUIRE(list2.empty());
+
+    // push pop sequences
+    list.push_front(obj1);
+    list.pop_front();
+    list.push_front(obj1);
+    list.pop_back();
+    list.push_back(obj1);
+    list.pop_back();
+    list.push_back(obj1);
+    list.pop_front();
+
+    REQUIRE(list.size() == 0);
+    REQUIRE(list2.size() == 0);
+    REQUIRE(list.empty());
+    REQUIRE(list2.empty());
+
+    // check data value correctness
     DataObj objs[numElements];
-
-    // check data values
     int idx = 0;
     for (auto& v : objs) {
         v.data = idx++;
@@ -196,4 +275,71 @@ TEST_CASE("IntrusiveSafeList", "list") {
         REQUIRE(obj.data == idx);
     }
     REQUIRE(list.size() == 0);
+}
+
+TEST_CASE("IntrusiveSafeList Iterator", "list") {
+    struct DataObj {
+        int data;
+        double data1;
+        listHook hook;
+        DataObj(int i, double f) : data(i), data1(f) {}
+    };
+
+    DataObj node1{1, 1.1};
+    DataObj node2{2, 2.2};
+    DataObj node3(3, 3.3);
+
+    IntrusiveSafeList<DataObj, listHook, &DataObj::hook> list;
+
+    list.push_back(node1);
+    list.push_back(node2);
+    list.push_back(node3);  // header->node1-node2-node3
+
+    // iterator resolvation
+    auto iter = list.begin();     // iter->node1
+    REQUIRE(&(*iter) == &node1);  // deref iter should return node1 object
+    REQUIRE((*iter).data == 1);
+    REQUIRE((*iter).data1 == 1.1);
+
+    // traverse
+    REQUIRE((iter++)->data == 1);
+    REQUIRE(iter->data == 2);
+    REQUIRE((++iter)->data == 3);
+    REQUIRE(&(*iter) == &node3);      // deref iter should return node3 object
+    REQUIRE(&(*(--iter)) == &node2);  // --iter put it to previous
+    REQUIRE(iter->data == 2);
+    REQUIRE(
+        &(*(iter--)) ==
+        &node2);  // iter-- returns a new iterator pointing to current position
+    REQUIRE(&(*iter) ==
+            &node1);  // iter itself is pointing to previous location
+
+    // boundaries
+    REQUIRE(
+        (--iter) ==
+        IntrusiveSafeList<DataObj, listHook,
+                          &DataObj::hook>::Iterator());  // cross the beginning
+                                                         // boundary, iter is
+                                                         // invalidated
+    REQUIRE(iter.is_valid() == false);
+
+    // STL algorithms
+    // any of the nodes in list should be node1 or node2 or node3
+    REQUIRE(
+        any_of(begin(list), end(list), [&node1, &node2, &node3](DataObj& node) {
+            return (DataObj*)&node != &node1 && (DataObj*)&node != &node2 &&
+                   (DataObj*)&node != &node3;
+        }) == false);
+    // locate a node in list
+    iter = find_if(begin(list), end(list),
+                   [&node1, &node2, &node3](DataObj& node) {
+                       return (DataObj*)&node == &node2;
+                   });
+    REQUIRE(&(*iter) == &node2);
+    REQUIRE(iter->data == 2);
+
+    // check the data
+    for (auto& v : list) {
+        REQUIRE(v.data1 == (double)v.data + ((double)v.data) / 10);
+    }
 }

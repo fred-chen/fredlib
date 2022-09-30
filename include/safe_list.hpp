@@ -24,7 +24,11 @@ class listHook;  // just a forward declaration
 template <typename NodeType = listHook>
 class SafeList {
 private:
-    bool _empty() { return mHead == nullptr; }
+    bool _empty() const { return mHead == nullptr && mTail == nullptr; }
+    std::mutex& _pass_mutex() {
+        // expose list mutex to outside, mainly for iterators
+        return mListMutex;
+    }
 
 protected:
     TEST_ONLY(public:)
@@ -127,11 +131,12 @@ public:
      */
     NodeType* pop_front() {
         std::lock_guard<std::mutex> locker(mListMutex);
-        NodeType* front;
+        NodeType* front = nullptr;
 
         if (!_empty()) {
             front = mHead;
             mHead = mHead->next;
+            mTail = mTail == front ? nullptr : mTail;  // last element removed
             front->unlink();
             mSize--;
         }
@@ -145,11 +150,12 @@ public:
      */
     NodeType* pop_back() {
         std::lock_guard<std::mutex> locker(mListMutex);
-        NodeType* back;
+        NodeType* back = nullptr;
 
         if (!_empty()) {
             back = mTail;
             mTail = mTail->prev;
+            mHead = mHead == back ? nullptr : mHead;  // last element removed
             back->unlink();
             mSize--;
         }
@@ -160,8 +166,107 @@ public:
         std::lock_guard<std::mutex> locker(mListMutex);
         return mSize;
     }
+    uint32_t empty() const {
+        std::lock_guard<std::mutex> locker(mListMutex);
+        return _empty();
+    }
 
-};  // namespace FRED
+    class Iterator {
+    private:
+        NodeType* mCurrent;
+        SafeList* mParent;
+
+    public:
+        // STL algorithm compliant
+        using iterator_category = std::bidirectional_iterator_tag;
+        using value_type = NodeType;
+        using difference_type = std::ptrdiff_t;
+        using pointer = NodeType*;
+        using reference = NodeType&;
+
+    public:
+        Iterator(SafeList* parent = nullptr) : mParent(parent) {
+            mCurrent = mParent ? mParent->mHead
+                               : nullptr;  // create a null iterator by default
+        }
+        Iterator(const Iterator& iter) {
+            mCurrent = iter.mCurrent;
+            mParent = iter.mParent;
+        }
+
+        /// operators
+        Iterator& operator=(const Iterator& rhs) {
+            mCurrent = rhs.mCurrent;
+            mParent = rhs.mParent;
+            return *this;
+        }
+
+        Iterator& operator++() {  // prefix ++
+            std::lock_guard<std::mutex> locker(mParent->_pass_mutex());
+            mCurrent = mCurrent->next;
+            if (mCurrent == nullptr) {
+                mParent =
+                    nullptr;  // invalidate iterator if it reaches the boundary
+            }
+            return *this;
+        }
+        Iterator operator++(int) {  // postfix ++
+            // ? note the postfix ++ returns another iterator by value
+            Iterator temp = *this;
+            operator++();
+            return temp;
+        }
+
+        Iterator& operator--() {  // prefix --
+            std::lock_guard<std::mutex> locker(mParent->_pass_mutex());
+            mCurrent = mCurrent->prev;
+            if (mCurrent == nullptr) {
+                mParent =
+                    nullptr;  // invalidate iterator if it reaches the boundary
+            }
+            return *this;
+        }
+        Iterator operator--(int) {
+            // postfix --
+            // ? note the postfix -- returns another iterator by value
+            Iterator temp = *this;
+            operator--();
+            return temp;
+        }
+
+        friend bool operator==(const Iterator& lhs, const Iterator& rhs) {
+            return lhs.mCurrent == rhs.mCurrent && lhs.mParent == rhs.mParent;
+        }
+        friend bool operator!=(const Iterator& lhs, const Iterator& rhs) {
+            return !(lhs == rhs);
+        }
+        friend bool operator<(const Iterator& lhs, const Iterator& rhs) {
+            // todo: find a better method other than memory address comparason
+            // one simple but expensive idea is to traverse the list
+            // and find out whether rhs is beond or behind the lhs
+            return lhs.mCurrent < rhs.mCurrent;
+        }
+        friend bool operator>(const Iterator& lhs, const Iterator& rhs) {
+            return rhs < lhs;
+        }
+        friend bool operator<=(const Iterator& lhs, const Iterator& rhs) {
+            return !(lhs > rhs);
+        }
+        friend bool operator>=(const Iterator& lhs, const Iterator& rhs) {
+            return !(lhs < rhs);
+        }
+
+        NodeType* operator->() { return mCurrent; }
+        NodeType& operator*() { return *mCurrent; }
+
+        bool is_valid() { return !(mParent == nullptr); }
+    };
+
+    Iterator begin() { return Iterator(this); }
+    Iterator end() {
+        return Iterator(nullptr);  // a null iterator
+    }
+};
 
 /**
  * @brief this is a node of a liked list, it hooks a bigger object on to a
@@ -225,9 +330,12 @@ struct listHook {
 template <typename ParentObjType, typename HookType,
           HookType ParentObjType::*PtrToHook>
 class IntrusiveSafeList : public SafeList<HookType> {
+    using ListType = IntrusiveSafeList<ParentObjType, HookType, PtrToHook>;
+
 private:
     TEST_ONLY(public:)
     std::ptrdiff_t mOffset;  // the offset HookType to the head of ParentObjType
+
 public:
     IntrusiveSafeList() {
         // address of PtrToHook from base address 0 (nullptr)
@@ -269,6 +377,91 @@ public:
      * @return HookType*
      */
     HookType* getHook(ParentObjType& obj) const { return &(obj.*PtrToHook); }
+
+    bool empty() const { return SafeList<HookType>::empty(); }
+
+    class Iterator {
+        using BaseIterType = typename SafeList<HookType>::Iterator;
+        using ParentType = ListType;
+
+    private:
+        BaseIterType _base_iter;
+        ParentType* mParent;
+
+    public:
+        // STL algorithm compliant
+        using iterator_category = std::bidirectional_iterator_tag;
+        using value_type = ParentObjType;
+        using difference_type = std::ptrdiff_t;
+        using pointer = value_type*;
+        using reference = value_type&;
+
+    public:
+        Iterator(ParentType* parent = nullptr) {
+            mParent = parent;
+            _base_iter = BaseIterType(mParent);
+        }
+
+        Iterator(const Iterator& iter) {
+            mParent = iter.mParent;
+            _base_iter = iter._base_iter;
+        }
+
+        /// operators
+        Iterator& operator=(const Iterator& rhs) {
+            _base_iter = rhs._base_iter;
+            return *this;
+        }
+
+        Iterator& operator++() {  // prefix ++
+            ++_base_iter;
+            return *this;
+        }
+        Iterator operator++(int) {  // postfix ++
+            Iterator temp = *this;
+            ++_base_iter;
+            return temp;
+        }
+
+        Iterator& operator--() {  // prefix --
+            --_base_iter;
+            return *this;
+        }
+        Iterator operator--(int) {
+            Iterator temp = *this;
+            --_base_iter;
+            return temp;
+        }
+
+        friend bool operator==(const Iterator& lhs, const Iterator& rhs) {
+            return lhs._base_iter == rhs._base_iter;
+        }
+        friend bool operator!=(const Iterator& lhs, const Iterator& rhs) {
+            return !(lhs == rhs);
+        }
+        friend bool operator<(const Iterator& lhs, const Iterator& rhs) {
+            return lhs._base_iter < rhs._base_iter;
+        }
+        friend bool operator>(const Iterator& lhs, const Iterator& rhs) {
+            return rhs < lhs;
+        }
+        friend bool operator<=(const Iterator& lhs, const Iterator& rhs) {
+            return !(lhs > rhs);
+        }
+        friend bool operator>=(const Iterator& lhs, const Iterator& rhs) {
+            return !(lhs < rhs);
+        }
+
+        value_type* operator->() {
+            return &mParent->getParent((&(*_base_iter)));
+        }
+        value_type& operator*() { return mParent->getParent((&(*_base_iter))); }
+
+        bool is_valid() { return _base_iter.is_valid(); }
+    };
+
+    Iterator begin() { return Iterator(this); }
+    Iterator end() { return Iterator(nullptr); }
 };
 
 }  // namespace FRED
