@@ -1,3 +1,5 @@
+#define UNDER_TEST
+
 #include "threading.hpp"
 
 #include <chrono>
@@ -6,7 +8,9 @@
 #include <vector>
 
 #include "catch.hpp"
+#include "micros.hpp"
 #include "safe_stdout.hpp"
+#include "time.hpp"
 
 using namespace FRED;
 using namespace std;
@@ -68,11 +72,8 @@ TEST_CASE("PausePoint", "[threading]") {
     }
 
     sp.sync();
-    // std::cout << "main thread asks to pause." << std::endl;
     ps.pause();
-    // safe_stdout( "main thread thinks all children paused." );
     sleep_ms(10);
-    // safe_stdout( "main thread asks to resume." );
     ps.resume();
 
     for (int i = 0; i < nthreads; i++) {
@@ -112,4 +113,85 @@ TEST_CASE("FanInPoint", "threading") {
     for (auto& t : v) {
         t.join();
     }
+}
+
+// This is a example thread function for WorkerThreads thread pool
+void func(void* arg, bool& result, ThreadControl& tc) {
+    int j = 0;
+    for (long i = 1; i <= *(long*)(arg); i++) {
+        tc.pauseIfRequred();  // you can use a ThreadControl object (tc) to
+                              // accept control from main thread.
+
+        if (tc.stopRequired()) {  // you can use the ThreadControl object (tc)
+                                  // to determ whether the main thread wants us
+                                  // to stop.
+            break;
+        }
+        j += i;
+    }
+
+    tc.sync();  // you can use the ThreadControl object to sync with other
+                // threads.
+
+    result =
+        true;  // result argument can be used to return the execution status.
+
+    *(long*)arg = j;  // the void* arg can be customized with any meanings.
+
+    tc.done();  // notify the waiting threads your job is done if it's desired.
+                // the main thread relys on all child threads to call
+                // done() before WorkThread::wait() can return.
+}
+
+TEST_CASE("WorkerThreads", "threading") {
+    long factor = 100;
+    const int nthreads = 10;
+    bool result = false;
+    long j = 0;
+
+    for (long i = 1; i <= factor; i++) {
+        j += i;
+    }
+
+    /// test basic function
+    WorkerThreads pool1 = WorkerThreads(func, (void*)&factor, result,
+                                        1);  // start thread pool
+    pool1.wait();
+    REQUIRE(result == true);  // to verify the thread pool actually run
+    REQUIRE(factor == j);     // to verify the thread pool actually run
+
+    /// test thread controls
+    ThreadRoutine f = [](void* arg, bool& result, ThreadControl& tc) {
+        tc.pauseIfRequred();  // pause all threads if required by main thread.
+        tc.sync();            // sync all threads
+        sleep_ms(50);
+        result = true;
+        *(long*)arg = 6;  // just return a wild number for main thread to check.
+        tc.done();        // notify main thread when done.
+    };
+
+    WorkerThreads pool = WorkerThreads(f, (void*)&factor, result,
+                                       nthreads);  // start thread pool
+
+    auto ms = pool.wait();  // wait for all threads to call tc.done()
+    REQUIRE(ms >= 50);      // the main thread should wait for at least 50ms.
+    REQUIRE(factor == 6);
+
+    /// test stopper
+    f = [](void* arg, bool& result, ThreadControl& tc) {
+        UNUSED(arg);
+        UNUSED(result);
+        while (true) {
+            sleep_ms(10);
+            if (tc.stopRequired()) {
+                break;
+            }
+        }  // a dead loop until the main thread asks to break.
+        tc.done();
+    };
+
+    WorkerThreads pool2 = WorkerThreads(f, (void*)&factor, result,
+                                        nthreads);  // start thread pool
+    ms = pool2.stop();  // ask and wait for all threads to stop (gracefully).
+    REQUIRE(ms >= 10);  // threads should run at least 10ms.
 }

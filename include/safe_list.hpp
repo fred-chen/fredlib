@@ -13,7 +13,7 @@
 #include <mutex>
 #include <thread>
 
-#include "testonly.hpp"
+#include "micros.hpp"
 
 namespace FRED {
 
@@ -274,11 +274,13 @@ public:
 };
 
 /**
- * @brief this is a node of a liked list, it hooks a bigger object on to a
- * linked list. listHook is a part of the 'real' data structure. listHook hooks
- * the real data structure on to a linked list. the data structure needs to
- * include a listHook object in its definition. then the data structure can be
- * linked together. this is also abbreviated as 'intrusive linked list'.
+ * @brief This is a node of a liked list, it hooks a bigger object on to a
+ *        linked list.
+ *        listHook is a part of the 'real' data structure. listHook hooks
+ *        the real data structure on a linked list.
+ *        The real data structure needs to include a listHook object in its
+ *        definition. Then they can be linked together. This is also abbreviated
+ *        as 'intrusive linked list'.
  *
  * @tparam ParentObjType, the actual data object that contains this hook
  * @tparam the offset of this hook object inside the data object
