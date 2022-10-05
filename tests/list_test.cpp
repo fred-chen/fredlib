@@ -1,6 +1,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -190,11 +191,11 @@ TEST_CASE("SafeList Iterator", "list") {
 
     // STL algorithms
     // any of the nodes in list should be node1 or node2 or node3
-    REQUIRE(std::any_of(std::begin(list), std::end(list),
-                        [&node1, &node2, &node3](listHook& node) {
-                            return &node != &node1 && &node != &node2 &&
-                                   &node != &node3;
-                        }) == false);
+    auto f = [&node1, &node2, &node3](listHook& node) {
+        return &node == &node1 || &node == &node2 || &node == &node3;
+    };
+    REQUIRE(std::any_of(std::begin(list), std::end(list), f));
+
     // locate a node in list
     iter = std::find_if(
         std::begin(list), std::end(list),
@@ -335,12 +336,11 @@ TEST_CASE("IntrusiveSafeList Iterator", "list") {
 
     // STL algorithms
     // any of the nodes in list should be node1 or node2 or node3
-    REQUIRE(std::any_of(std::begin(list), std::end(list),
-                        [&node1, &node2, &node3](DataObj& node) {
-                            return (DataObj*)&node != &node1 &&
-                                   (DataObj*)&node != &node2 &&
-                                   (DataObj*)&node != &node3;
-                        }) == false);
+    auto f = [&node1, &node2, &node3](DataObj& node) {
+        return (DataObj*)&node != &node1 && (DataObj*)&node != &node2 &&
+               (DataObj*)&node != &node3;
+    };
+    REQUIRE(std::any_of(std::begin(list), std::end(list), f) == false);
 
     // locate a node in list
     iter = std::find_if(std::begin(list), std::end(list),
@@ -353,5 +353,66 @@ TEST_CASE("IntrusiveSafeList Iterator", "list") {
     // check the data
     for (auto& v : list) {
         REQUIRE(v.data1 == (double)v.data + ((double)v.data) / 10);
+    }
+}
+
+TEST_CASE("SafeList Thread Safety", "list") {
+    char n = 0;
+
+    // a self-check structure
+    struct Data {
+        char data[100];
+        long sum = 0;
+        listHook hook;
+        long checksum() {
+            long s = 0;
+            for (auto& v : data) {
+                s += v;
+            }
+            return s;
+        }
+        long calsum() {
+            sum = checksum();
+            return sum;
+        }
+        bool verify() { return sum == checksum(); }
+    };
+
+    // thread function to put Data structures into a safe list
+    const int num_data = 10;
+    auto f = [&n, &num_data](
+                 IntrusiveSafeList<Data, listHook, &Data::hook>& q) -> bool {
+        for (int j = 0; j < num_data; j++) {
+            Data* d = new Data();
+            for (int i = 0; i < 100; n = n % 128) {
+                d->data[i++] = n++;
+            }
+            d->calsum();
+            REQUIRE(d->verify());
+            if (!q.push_back(*d)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // create threads to push data into a list simultaneously
+    const int numthreads = 100;
+
+    IntrusiveSafeList<Data, listHook, &Data::hook> q;
+    std::future<bool> futs[numthreads];
+
+    for (int i = 0; i < numthreads; i++) {
+        futs[i] = std::async(std::launch::async, f, std::ref(q));
+    }
+
+    for (auto& fut : futs) {
+        fut.get();
+    }
+
+    // list consistency and data integrity
+    REQUIRE(q.size() == numthreads * num_data);
+    for (auto& v : q) {
+        REQUIRE(v.verify());
     }
 }

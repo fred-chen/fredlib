@@ -123,7 +123,7 @@ void func(void* arg, bool& result, ThreadControl& tc) {
                               // accept control from main thread.
 
         if (tc.stopRequired()) {  // you can use the ThreadControl object (tc)
-                                  // to determ whether the main thread wants us
+                                  // to determ whether or not the main thread wants us
                                   // to stop.
             break;
         }
