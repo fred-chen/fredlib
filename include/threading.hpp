@@ -13,10 +13,12 @@
 #include <atomic>
 #include <condition_variable>
 #include <functional>
+#include <future>
 #include <mutex>
 #include <thread>
 #include <vector>
 
+#include "safe_list.hpp"
 #include "time.hpp"
 
 namespace FRED {
@@ -151,8 +153,9 @@ public:
         : mPause(false), mPausedThreads(0), mExpectedThreads(expected) {}
 
     /**
-     * @brief   the function should be called by threads that need to stop
-     *          sleep(pause) if required.
+     * @brief   Pause if the main thread (or any other threads) asked, until the
+     *          pause request is canceled by other threads. the function should
+     *          be called by threads that need to stop sleep(pause) if required.
      * @return  n milliseconds waited
      */
     size_t pauseIfRequred() {
@@ -262,14 +265,20 @@ public:
     }
 };
 
-typedef void (*ThreadRoutine)(void* arg, bool& result, ThreadControl& tc);
 /**
  * @brief A thread pool that run ThreadRoutine(s).
  *        WorkerThreads is meant for some long term tasks.
  *        WorkerThreads takes a ThreadRoutine function as its target.
+ *        ThreadRoutine is provided by the user. It takes a ThreadControl
+ *        object 'tc' as a control point.
+ *        Inside the ThreadRoutine function body, user can customize the code to
+ *        check the 'tc' object to determ if it needs to stop or pause.
+ *
  */
+typedef void (*ThreadRoutine)(void* arg, bool& result, ThreadControl& tc);
 class WorkerThreads {
 private:
+    std::mutex _muWorkerThreads;           // the lock protects thread vector
     std::vector<std::thread> _vecThreads;  // the list of threads
     ThreadControl _tc;
 
@@ -304,6 +313,8 @@ public:
         for (auto& v : _vecThreads) {
             v.join();
         }
+        std::lock_guard<std::mutex> locker(_muWorkerThreads);
+        _vecThreads.clear();
     }
 
     size_t pause() { return _tc.pause(); }
@@ -314,6 +325,7 @@ public:
         join();
         return waited;
     }
+
     /**
      * @brief ask and wait for all threads to stop.
      *
@@ -340,6 +352,7 @@ public:
      */
     void add_thread(ThreadRoutine& visitor, void* arg, bool& result,
                     int nthreads = 0, double scale = 1.0) {
+        std::lock_guard<std::mutex> locker(_muWorkerThreads);
         if (nthreads == 0) {
             nthreads = std::thread::hardware_concurrency();
         }
@@ -349,6 +362,89 @@ public:
             _vecThreads.emplace_back(visitor, arg, std::ref(result),
                                      std::ref(_tc));
         }
+    }
+
+    int get_numthreads() {
+        std::lock_guard<std::mutex> locker(_muWorkerThreads);
+        return _vecThreads.size();
+    }
+};
+
+/**
+ * @brief A generic thread pool that takes a task from a function queue
+ *        and execute them in a pool of threads.
+ *
+ */
+class GenericThreadPool {
+    using hookType = listHook;
+    struct QueueElement {
+        std::packaged_task<void()> task;
+        hookType hook;
+    };
+    using QueueType =
+        IntrusiveSafeList<QueueElement, hookType, &QueueElement::hook>;
+
+private:
+    std::mutex _muThreadPool;              // the lock protects thread vector
+    std::vector<std::thread> _vecThreads;  // the thread vector
+    QueueType _q;                          // the function queue
+    ThreadControl _tc;  // the thread control object for all threads in the pool
+    /**
+     * @brief the worker thread function.
+     *        worker threads pull functions from the queue and execute them.
+     *        worker threads exit when asked by the main thread.
+     *        worker threads pause when asked by the main thread.
+     *
+     */
+    void _worker_thread(ThreadControl& tc) {
+        while (true) {
+            tc.pauseIfRequred();
+            if (tc.stopRequired()) {
+                break;
+            }
+            QueueElement& qe = _q.pop_front();
+            qe.task();
+        }
+    };
+
+private:
+    /**
+     * @brief compose a thread object and append to vector
+     *
+     * @param nthreads the number of threads to be added
+     */
+    template <typename... Args>
+    void _add_thread(int nthreads) {
+        for (int i = 0; i < nthreads; i++) {
+            _vecThreads.emplace_back(&GenericThreadPool::_worker_thread, this,
+                                     _tc);
+        }
+    }
+    /**
+     * @brief change number of threads in the thread pool
+     *
+     * @param nthreads number of threads
+     */
+    void _set_numthreads(int nthreads) { UNUSED(nthreads); }
+
+public:
+    GenericThreadPool(int numthreads) {
+        if (!numthreads) {
+            numthreads = std::thread::hardware_concurrency();
+        }
+    }
+    void start(int nthreads) { UNUSED(nthreads); }
+    void add_thread(int nthreads = 1) {
+        std::lock_guard<std::mutex> locker(_muThreadPool);
+        _add_thread(nthreads);
+    }
+    int get_numthreads() {
+        std::lock_guard<std::mutex> locker(_muThreadPool);
+        return _vecThreads.size();
+    }
+    template <typename FuncType, typename... Args>
+    void push_function(FuncType& visitor, Args&&... args) {
+        std::packaged_task<FuncType> task(visitor, std::forward<Args>(args)...);
     }
 };
 

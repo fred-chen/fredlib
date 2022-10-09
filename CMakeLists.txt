@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(mylib)
+set(CXX_STANDARD C++11)
 
 # set(CMAKE_VERBOSE_MAKEFILE TRUE)
 set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CMAKE_COMMAND} -E time")

@@ -123,8 +123,8 @@ void func(void* arg, bool& result, ThreadControl& tc) {
                               // accept control from main thread.
 
         if (tc.stopRequired()) {  // you can use the ThreadControl object (tc)
-                                  // to determ whether or not the main thread wants us
-                                  // to stop.
+                                  // to determ whether or not the main thread
+                                  // wants us to stop.
             break;
         }
         j += i;
@@ -192,6 +192,11 @@ TEST_CASE("WorkerThreads", "threading") {
 
     WorkerThreads pool2 = WorkerThreads(f, (void*)&factor, result,
                                         nthreads);  // start thread pool
+    REQUIRE(nthreads == pool2.get_numthreads());
+
+    pool2.add_thread(f, (void*)&factor, result, 1);
+    REQUIRE(nthreads + 1 == pool2.get_numthreads());
+
     ms = pool2.stop();  // ask and wait for all threads to stop (gracefully).
     REQUIRE(ms >= 10);  // threads should run at least 10ms.
 }

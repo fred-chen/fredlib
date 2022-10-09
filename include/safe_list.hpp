@@ -282,8 +282,6 @@ public:
  *        definition. Then they can be linked together. This is also abbreviated
  *        as 'intrusive linked list'.
  *
- * @tparam ParentObjType, the actual data object that contains this hook
- * @tparam the offset of this hook object inside the data object
  */
 struct listHook {
     listHook* prev = nullptr;  // previous node
