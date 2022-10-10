@@ -33,8 +33,6 @@ using std::unique_lock;
  */
 class SyncPoint {
 private:
-    atomic<int>
-        mSyncedThreads;    // number of threads that have reached the syncpoint
     int mExpectedThreads;  // expected number of threads that reached the
                            // syncpoint
     condition_variable
@@ -43,8 +41,7 @@ private:
 public:
     SyncPoint(const SyncPoint&) = delete;
     SyncPoint& operator=(const SyncPoint&) = delete;
-    SyncPoint(int expected = 1)
-        : mSyncedThreads(0), mExpectedThreads(expected) {}
+    SyncPoint(int expected = 1) : mExpectedThreads(expected) {}
 
     /**
      * @brief   function should be called by threads that need to sync
@@ -53,16 +50,14 @@ public:
      * @return  n milliseconds waited
      */
     size_t sync() {
+        unique_lock locker(mSyncMutex);
         auto start = timer_start();
-        mSyncedThreads++;
-        if (mSyncedThreads == mExpectedThreads) {
+        mExpectedThreads--;
+        if (mExpectedThreads == 0) {
             // wakeup all if all threads have reached this sync point
             mCvSync.notify_all();
         } else {
-            unique_lock locker(mSyncMutex);
-            mCvSync.wait(locker, [this]() {
-                return mSyncedThreads == mExpectedThreads;
-            });
+            mCvSync.wait(locker, [this]() { return mExpectedThreads == 0; });
         }
         return ms_elapsed_since(start);
     }
@@ -73,12 +68,18 @@ public:
      * @param expected is the thread number that reach the sync point
      */
     void initialize(int expected) {
-        mSyncedThreads = 0;
+        std::lock_guard<std::mutex> locker(mSyncMutex);
         mExpectedThreads = expected;
     }
 
-    void add_thread(int num) { mExpectedThreads += num; }
-    void set_threadnum(int num) { mExpectedThreads = num; }
+    void add_thread(int num = 1) {
+        std::lock_guard<std::mutex> locker(mSyncMutex);
+        mExpectedThreads += num;
+    }
+    void set_threadnum(int num) {
+        std::lock_guard<std::mutex> locker(mSyncMutex);
+        mExpectedThreads = num;
+    }
 };
 
 /**
@@ -87,7 +88,7 @@ public:
  */
 class FanInPoint {
 private:
-    atomic<int> mExpectedThreads;  // number of threads expected
+    int mExpectedThreads;  // number of threads expected
     condition_variable
         mCvFanIn;       // the condition variable where threads check sync at
     mutex mFanInMutex;  // protects the condition variables
@@ -99,8 +100,9 @@ public:
      *
      */
     void done() {
+        std::lock_guard<mutex> locker(mFanInMutex);
         mExpectedThreads--;
-        mCvFanIn.notify_one();
+        mCvFanIn.notify_all();
     }
 
     /**
@@ -113,7 +115,7 @@ public:
         /// wait will cause caller to sleep until mExpectedThreads == 0
         auto start = timer_start();
         unique_lock<mutex> locker(mFanInMutex);
-        mCvFanIn.wait(locker, [this]() { return mExpectedThreads == 0; });
+        mCvFanIn.wait(locker, [this] { return mExpectedThreads == 0; });
         return ms_elapsed_since(start);
     }
 
@@ -121,16 +123,29 @@ public:
      * @brief increase expected child thread number
      *
      */
-    void add() { mExpectedThreads++; }
+    void add() {
+        std::lock_guard<mutex> locker(mFanInMutex);
+        mExpectedThreads++;
+    }
 
     /**
      * @brief set expected thread number
      *
      * @param expected is the thread number that reach the sync point
      */
-    void initialize(int expected) { mExpectedThreads = expected; }
-    void add_thread(int num) { mExpectedThreads += num; }
-    void set_threadnum(int num) { mExpectedThreads = num; }
+    void initialize(int expected) {
+        std::lock_guard<mutex> locker(mFanInMutex);
+
+        mExpectedThreads = expected;
+    }
+    void add_thread(int num) {
+        std::lock_guard<mutex> locker(mFanInMutex);
+        mExpectedThreads += num;
+    }
+    void set_threadnum(int num) {
+        std::lock_guard<mutex> locker(mFanInMutex);
+        mExpectedThreads = num;
+    }
 };
 
 /**
@@ -139,8 +154,7 @@ public:
 class PausePoint {
 private:
     atomic<bool> mPause;  // true: pause, false: resume
-    atomic<int>
-        mPausedThreads;  // number of threads that have achieved the pause state
+    int mPausedThreads;  // number of threads that have achieved the pause state
     int mExpectedThreads;  // expected number of threads that reached the
                            // syncpoint
     condition_variable
@@ -164,8 +178,10 @@ public:
 
         if (mPause == true) {
             mPausedThreads++;
-            mCvPaused.notify_one();
+            mCvPaused.notify_all();
             mCvPause.wait(locker, [this]() { return !mPause; });
+            mPausedThreads--;
+            mCvPaused.notify_all();
         }
 
         return ms_elapsed_since(start);
@@ -179,21 +195,26 @@ public:
      */
     size_t pause() {
         auto start = timer_start();
-        mPause = true;
         unique_lock<mutex> locker(mPauseMutex);
+        mPause = true;
         mCvPaused.wait(locker,
                        [this] { return mPausedThreads == mExpectedThreads; });
-
         return ms_elapsed_since(start);
     }
 
     /**
-     * @brief resume all threads, called by main threads
+     * @brief resume all threads, called by main threads。
+     *        resume() returns when all threads are continue running.
      *
+     * @return  n milliseconds waited
      */
-    void resume() {
+    size_t resume() {
+        auto start = timer_start();
+        unique_lock<mutex> locker(mPauseMutex);
         mPause = false;
         mCvPause.notify_all();
+        mCvPaused.wait(locker, [this] { return mPausedThreads == 0; });
+        return ms_elapsed_since(start);
     }
 
     /**
@@ -202,11 +223,18 @@ public:
      * @param expected is the thread number that reach the sync point
      */
     void initialize(int expected) {
+        unique_lock<mutex> locker(mPauseMutex);
         mPausedThreads = 0;
         mExpectedThreads = expected;
     }
-    void add_thread(int num) { mExpectedThreads += num; }
-    void set_threadnum(int num) { mExpectedThreads = num; }
+    void add_thread(int num) {
+        unique_lock<mutex> locker(mPauseMutex);
+        mExpectedThreads += num;
+    }
+    void set_threadnum(int num) {
+        unique_lock<mutex> locker(mPauseMutex);
+        mExpectedThreads = num;
+    }
 };
 
 /**
@@ -253,7 +281,7 @@ public:
      */
     bool stopRequired() { return _stopper; }
 
-    void add_thread(int num) {
+    void add_thread(int num = 1) {
         SyncPoint::add_thread(num);
         FanInPoint::add_thread(num);
         PausePoint::add_thread(num);
@@ -321,8 +349,10 @@ public:
     size_t sync() { return _tc.sync(); }
     void resume() { _tc.resume(); }
     size_t wait() {
-        size_t waited = _tc.wait();
-        join();
+        size_t waited = 0;
+        if (_vecThreads.size() > 0) {
+            waited = _tc.wait();
+        }
         return waited;
     }
 
@@ -332,9 +362,16 @@ public:
      * @return size_t n milliseconds waited.
      */
     size_t stop() {
-        size_t waited = _tc.stop();
-        join();
+        size_t waited = 0;
+        if (_vecThreads.size() > 0) {
+            waited = _tc.stop();
+        }
         return waited;
+    }
+
+    ~WorkerThreads() {
+        stop();
+        join();
     }
 
     /**
@@ -378,8 +415,13 @@ public:
 class GenericThreadPool {
     using hookType = listHook;
     struct QueueElement {
-        std::packaged_task<void()> task;
+        std::packaged_task<void()>* task = nullptr;
         hookType hook;
+        ~QueueElement() {
+            if (task) {
+                delete task;
+            }
+        }
     };
     using QueueType =
         IntrusiveSafeList<QueueElement, hookType, &QueueElement::hook>;
@@ -402,50 +444,71 @@ private:
             if (tc.stopRequired()) {
                 break;
             }
-            QueueElement& qe = _q.pop_front();
-            qe.task();
+            QueueElement* qe = _q.pop_front(100);
+            if (qe) {
+                (*qe->task)();
+                delete qe;
+            }
         }
+        tc.done();
     };
 
-private:
     /**
      * @brief compose a thread object and append to vector
      *
-     * @param nthreads the number of threads to be added
      */
-    template <typename... Args>
-    void _add_thread(int nthreads) {
-        for (int i = 0; i < nthreads; i++) {
-            _vecThreads.emplace_back(&GenericThreadPool::_worker_thread, this,
-                                     _tc);
-        }
+    void _add_thread() {
+        _vecThreads.emplace_back(&GenericThreadPool::_worker_thread, this,
+                                 std::ref(_tc));
+        _tc.add_thread();
     }
-    /**
-     * @brief change number of threads in the thread pool
-     *
-     * @param nthreads number of threads
-     */
-    void _set_numthreads(int nthreads) { UNUSED(nthreads); }
 
 public:
-    GenericThreadPool(int numthreads) {
-        if (!numthreads) {
+    GenericThreadPool(int numthreads = 0, double scale = 1.0) {
+        if (numthreads == 0) {
             numthreads = std::thread::hardware_concurrency();
         }
+        numthreads *= scale;
+        for (int i = 0; i < numthreads; i++) {
+            _add_thread();
+        }
     }
-    void start(int nthreads) { UNUSED(nthreads); }
     void add_thread(int nthreads = 1) {
         std::lock_guard<std::mutex> locker(_muThreadPool);
-        _add_thread(nthreads);
+        for (int i = 0; i < nthreads; i++) {
+            _add_thread();
+        }
     }
     int get_numthreads() {
         std::lock_guard<std::mutex> locker(_muThreadPool);
         return _vecThreads.size();
     }
     template <typename FuncType, typename... Args>
-    void push_function(FuncType& visitor, Args&&... args) {
-        std::packaged_task<FuncType> task(visitor, std::forward<Args>(args)...);
+    void push_function(FuncType visitor, Args&&... args) {
+        QueueElement* qe = new QueueElement;
+        qe->task = new std::packaged_task<void()>(
+            std::bind(visitor, std::forward<Args>(args)...));
+        _q.push_back(*qe);
     }
+    /**
+     * @brief stop the thread pool and join all worker threads
+     *
+     */
+    size_t stop() {
+        size_t waited = 0;
+        if (get_numthreads() > 0) {
+            waited = _tc.stop();
+            for (auto& t : _vecThreads) {
+                t.join();
+            }
+            std::lock_guard<std::mutex> locker(_muThreadPool);
+            _vecThreads.clear();
+        }
+        return waited;
+    }
+    size_t pause() { return _tc.pause(); }
+    void resume() { _tc.resume(); }
+    ~GenericThreadPool() { stop(); }
 };
 
 }  // namespace FRED

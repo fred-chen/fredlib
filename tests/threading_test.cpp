@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -113,6 +114,13 @@ TEST_CASE("FanInPoint", "threading") {
     for (auto& t : v) {
         t.join();
     }
+
+    // boundaries
+    waiter.initialize(0);
+    auto start = timer_start();
+    waiter.wait();  // should return immediate
+    dur = ms_elapsed_since(start);
+    REQUIRE(dur <= 10);
 }
 
 // This is a example thread function for WorkerThreads thread pool
@@ -199,4 +207,64 @@ TEST_CASE("WorkerThreads", "threading") {
 
     ms = pool2.stop();  // ask and wait for all threads to stop (gracefully).
     REQUIRE(ms >= 10);  // threads should run at least 10ms.
+}
+
+TEST_CASE("GenericThreadPool", "threading") {
+    const int nthreads = 10;
+    GenericThreadPool pool(nthreads);
+    FanInPoint fip(1);
+    std::atomic_int result(0);
+
+    REQUIRE(pool.get_numthreads() == nthreads);  // worker thread number
+
+    /// a simple function to put into thread pool
+    auto f = [&result](int n, FanInPoint& fip) {
+        // the function to be called in thread pool
+        // increase a number by n every execution
+        std::atomic_int i = 0;
+        result += n;
+        fip.done();
+    };
+    pool.push_function(
+        f, 3,
+        std::ref(fip));  // * note the reference types must be wrapped in
+                         // * std::ref() otherwise the std::function won't
+                         // * receve it as a reference type
+    fip.wait();
+    REQUIRE(result == 3);
+
+    fip.set_threadnum(1);
+    pool.push_function(f, 6, std::ref(fip));
+    fip.wait();
+    REQUIRE(result == 9);
+
+    /// mix types of functions
+    int assignMe = 0;
+    auto callback = [&assignMe] { REQUIRE(assignMe == 11); };
+
+    fip.set_threadnum(1);
+    pool.push_function(f, 1, std::ref(fip));  // a function with parameters
+    pool.push_function([&assignMe, &callback] {
+        assignMe = 11;
+        callback();
+    });  // a lambda function without parameters
+
+    fip.wait();
+    REQUIRE(result == 10);
+
+    /// pause the pool
+    pool.pause();  // wait until all worker threads paused
+    fip.set_threadnum(1);
+    pool.push_function(f, 1, std::ref(fip));  // a function with parameters
+    sleep_s(1);
+    REQUIRE(
+        result ==
+        10);  // the function shouldn't be executed because the pool is paused
+    pool.resume();
+    fip.wait();
+    REQUIRE(result == 11);  // pool resumed, the result should be altered
+
+    /// pool stop
+    pool.stop();
+    REQUIRE(pool.get_numthreads() == 0);  // worker thread number
 }

@@ -94,8 +94,8 @@ void intrusive_safe_list_demo() {
 
     IntrusiveSafeList<MyDataType, listHook, &MyDataType::hook> list;
     list.push_back(data);
-    data = list.pop_front();
-    std::cout << "data of MyDataType is " << data.data << std::endl;  // 5
+    MyDataType* pdata = list.pop_front();
+    std::cout << "data of MyDataType is " << pdata->data << std::endl;  // 5
 
     /// you can also use iterator to traverse a IntrusiveSafeList
     list.push_back(data);

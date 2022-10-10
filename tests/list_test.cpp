@@ -12,6 +12,7 @@
 
 #include "safe_list.hpp"
 #include "safe_stdout.hpp"
+#include "time.hpp"
 
 using namespace FRED;
 
@@ -236,8 +237,8 @@ TEST_CASE("IntrusiveSafeList", "list") {
             4 + 4 + 8);  // sizeof(int) + 4B padding + sizeof(double)
     REQUIRE(list2.mOffset ==
             40 + 8);  // sizeof(int) * 10 + 0 padding + sizeof(double)
-    REQUIRE(&(list.pop_back()) == &obj1);
-    REQUIRE(&(list2.pop_front()) == &obj2);
+    REQUIRE(list.pop_back() == &obj1);
+    REQUIRE(list2.pop_front() == &obj2);
 
     REQUIRE(list.size() == 0);
     REQUIRE(list2.size() == 0);
@@ -269,8 +270,8 @@ TEST_CASE("IntrusiveSafeList", "list") {
     REQUIRE(list.size() == numElements);
 
     for (idx -= 1; idx >= 0; idx--) {
-        DataObj obj = list.pop_back();
-        REQUIRE(obj.data == idx);
+        DataObj* obj = list.pop_back();
+        REQUIRE(obj->data == idx);
     }
     REQUIRE(list.size() == 0);
 
@@ -282,8 +283,8 @@ TEST_CASE("IntrusiveSafeList", "list") {
     REQUIRE(list.size() == numElements);
 
     for (idx -= 1; idx >= 0; idx--) {
-        DataObj obj = list.pop_front();
-        REQUIRE(obj.data == idx);
+        DataObj* obj = list.pop_front();
+        REQUIRE(obj->data == idx);
     }
     REQUIRE(list.size() == 0);
 }
@@ -334,8 +335,23 @@ TEST_CASE("IntrusiveSafeList Iterator", "list") {
                                                          // invalidated
     REQUIRE(iter.is_valid() == false);
 
+    // empty list
+    REQUIRE(list.size() == 3);  // header->node1-node2-node3
+    list.pop_back();
+    list.pop_front();
+    list.pop_back();
+    REQUIRE(list.size() == 0);  // empty
+    auto start = timer_start();
+    list.pop_front(1000);
+    REQUIRE(ms_elapsed_since(start) > 990);
+    REQUIRE(list.begin() == list.end());
+
     // STL algorithms
     // any of the nodes in list should be node1 or node2 or node3
+    list.push_back(node1);
+    list.push_back(node2);
+    list.push_back(node3);  // header->node1-node2-node3
+
     auto f = [&node1, &node2, &node3](DataObj& node) {
         return (DataObj*)&node != &node1 && (DataObj*)&node != &node2 &&
                (DataObj*)&node != &node3;
@@ -354,6 +370,18 @@ TEST_CASE("IntrusiveSafeList Iterator", "list") {
     for (auto& v : list) {
         REQUIRE(v.data1 == (double)v.data + ((double)v.data) / 10);
     }
+
+    // iterator on empty list shouldn't cause trouble
+    list.pop_front();
+    list.pop_front();
+    list.pop_front();
+    REQUIRE(list.size() == 0);  // empty
+    int n = 0;
+    for (auto& v : list) {
+        UNUSED(v);
+        n++;
+    }
+    REQUIRE(n == 0);
 }
 
 TEST_CASE("SafeList Thread Safety", "list") {

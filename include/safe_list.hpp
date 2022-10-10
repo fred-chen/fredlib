@@ -10,6 +10,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 
@@ -34,6 +35,7 @@ private:
 
 protected:
     TEST_ONLY(public:)
+    std::condition_variable mListCV;
     mutable std::mutex mListMutex;  // the mutex to protect the whole list
     NodeType* mHead;  // point to the first node of the linked list
     NodeType* mTail;  // point to the last node of the linked list
@@ -72,6 +74,8 @@ public:
         }
         mSize++;
 
+        mListCV.notify_all();
+
         return true;
     }
 
@@ -97,6 +101,7 @@ public:
         }
         node->unlink();
         mSize--;
+        mListCV.notify_all();
         return true;
     }
 
@@ -122,19 +127,28 @@ public:
             mTail = newNode;
         }
         mSize++;
+        mListCV.notify_all();
         return true;
     }
     bool push_front(NodeType* newNode) { return insert(mHead, newNode); }
 
     /**
      * @brief pop front node
+     *        wait for at most timeout milliseconds until an element is inserted
+     *        if the list is empty.
+     * @param timeout, timeout in milliseconds, 0 wait forever.
      *
-     * @return NodeType* is the popped front node
+     * @return NodeType* is the popped front node, nullptr if timeout.
      */
-    NodeType* pop_front() {
-        std::lock_guard<std::mutex> locker(mListMutex);
+    NodeType* pop_front(int timeout = 0) {
+        std::unique_lock<std::mutex> locker(mListMutex);
         NodeType* front = nullptr;
-
+        if (timeout) {
+            mListCV.wait_for(locker, std::chrono::milliseconds(timeout),
+                             [this]() { return !_empty(); });
+        } else {
+            mListCV.wait(locker, [this]() { return !_empty(); });
+        }
         if (!_empty()) {
             front = mHead;
             mHead = mHead->next;
@@ -147,12 +161,22 @@ public:
 
     /**
      * @brief pop tailing node
+     *        wait for at most timeout milliseconds until an element is inserted
+     *        if the list is empty.
+     *
+     * @param timeout, timeout in milliseconds, 0 wait forever.
      *
      * @return NodeType* is the old tailing node
      */
-    NodeType* pop_back() {
-        std::lock_guard<std::mutex> locker(mListMutex);
+    NodeType* pop_back(int timeout = 0) {
+        std::unique_lock<std::mutex> locker(mListMutex);
         NodeType* back = nullptr;
+        if (timeout) {
+            mListCV.wait_for(locker, std::chrono::milliseconds(timeout),
+                             [this]() { return !_empty(); });
+        } else {
+            mListCV.wait(locker, [this]() { return !_empty(); });
+        }
 
         if (!_empty()) {
             back = mTail;
@@ -355,13 +379,13 @@ public:
     bool push_front(ParentObjType& obj) {
         return SafeList<HookType>::push_front(getHook(obj));
     }
-    ParentObjType& pop_front() {
-        HookType* hook = SafeList<HookType>::pop_front();
-        return getParent(hook);
+    ParentObjType* pop_front(int timeout = 0) {
+        HookType* hook = SafeList<HookType>::pop_front(timeout);
+        return hook ? getParent(hook) : nullptr;
     }
-    ParentObjType& pop_back() {
-        HookType* hook = SafeList<HookType>::pop_back();
-        return getParent(hook);
+    ParentObjType* pop_back(int timeout = 0) {
+        HookType* hook = SafeList<HookType>::pop_back(timeout);
+        return hook ? getParent(hook) : nullptr;
     }
     /**
      * @brief return the parent object of the hook node
@@ -370,9 +394,9 @@ public:
      * @return ParentObjType
      *
      */
-    ParentObjType& getParent(HookType* hook) const {
-        return *(
-            (ParentObjType*)(reinterpret_cast<std::ptrdiff_t>(hook) - mOffset));
+    ParentObjType* getParent(HookType* hook) const {
+        return (ParentObjType*)(reinterpret_cast<std::ptrdiff_t>(hook) -
+                                mOffset);
     }
 
     /**
@@ -458,9 +482,11 @@ public:
         }
 
         value_type* operator->() {
-            return &mParent->getParent((&(*_base_iter)));
+            return mParent->getParent((&(*_base_iter)));
         }
-        value_type& operator*() { return mParent->getParent((&(*_base_iter))); }
+        value_type& operator*() {
+            return *(mParent->getParent((&(*_base_iter))));
+        }
 
         bool is_valid() { return _base_iter.is_valid(); }
     };
