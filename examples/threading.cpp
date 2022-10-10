@@ -239,6 +239,22 @@ void genericthreadpool_demo() {
         assignMe = 11;
         callback();
     });
+
+    // you can pause/resume a pool
+    pool.pause();
+    pool.resume();
+
+    // you can increase number of threads for performance
+    pool.add_thread(2);
+
+    // you can get current thread number
+    int num = pool.get_numthreads();
+    std::cout << "number of threads: " << num << std::endl;
+
+    // you can stop the pool
+    pool.stop();
+    num = pool.get_numthreads();
+    std::cout << "number of threads after stop(): " << num << std::endl;
 }
 
 int main() {
