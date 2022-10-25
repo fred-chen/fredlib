@@ -118,7 +118,7 @@ TEST_CASE("FanInPoint", "threading") {
     // boundaries
     waiter.initialize(0);
     auto start = timer_start();
-    waiter.wait();  // should return immediate
+    waiter.wait();  // should return immediately
     dur = ms_elapsed_since(start);
     REQUIRE(dur <= 10);
 }

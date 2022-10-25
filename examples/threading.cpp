@@ -75,7 +75,7 @@ void pausepoint_demo() {
     auto f = [&pp] {  // the thread function
         sleep_s(1);   // wait a while to make sure main thread calls pause()
                       // before we call pauseIfRequred()
-                      // ! normally you don't have to do that, this is just for
+                      // ! normally you don't have to do this, this is just for
                       // ! this example function.
         pp.pauseIfRequred();  // threads pause here if main thread called
                               // pause().
@@ -134,8 +134,8 @@ void faninpoint_demo() {
  * @brief A ThreadControl is actually a combination of SyncPoint, PausePoint,
  *        FanInPoint, plus a stop control point.
  *        Main thread uses a ThreadControl to do anything a SyncPoint,
- * PausePoint, or a FanInPoint can do. Actually a ThreadControl is a child class
- * of above classes.
+ *        PausePoint, or a FanInPoint can do. Actually a ThreadControl is a
+ *        child class of above classes.
  *
  */
 void threadcontrol_demo() {
@@ -176,6 +176,10 @@ void threadcontrol_demo() {
 
 /**
  * @brief WorkerThreads is a thread pool meant for some long term tasks.
+ *        WorkerThreads accept a 'ThreadRoutine' as the thread target function.
+ *
+ * ThreadRoutine is defined as this:
+ * typedef void (*ThreadRoutine)(void* arg, bool& result, ThreadControl& tc);
  *
  */
 void workerthread_demo() {
@@ -208,10 +212,11 @@ void workerthread_demo() {
     const int nthreads = 10;
     bool result = false;
 
-    WorkerThreads pool1 = WorkerThreads(func, (void*)&factor, result,
-                                        nthreads);  // start thread pool
+    // define and start a thread pool
+    WorkerThreads pool1 = WorkerThreads(func, (void*)&factor, result, nthreads);
 
-    // you can pause/resume, sync, and stop a thread pool
+    // you can pause/resume, sync, and stop a thread pool.
+    // but, the thread function should support it in it's function body.
     pool1.pause();
     pool1.resume();
     pool1.stop();

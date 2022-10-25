@@ -35,4 +35,11 @@ inline static void __assertFunction(const char *message, const char *file,
     ((must_be_true_predicate) ? (void)0     \
                               : __assertFunction(msg, __FILE__, __LINE__))
 
+#define KB (1 << 10)
+#define MB (1 << 20)
+#define GB (1 << 30)
+#define TB (1 << 40)
+#define PB (1 << 50)
+#define EB (1 << 60)
+
 }  // namespace FRED
