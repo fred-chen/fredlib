@@ -40,6 +40,11 @@ size_t ms_elapsed_since(time_point<std::chrono::steady_clock> start) {
     auto dur = end - start;
     return std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
 }
+size_t us_elapsed_since(time_point<std::chrono::steady_clock> start) {
+    time_point end = std::chrono::steady_clock::now();
+    auto dur = end - start;
+    return std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+}
 
 /**
  * @brief sleep for sec seconds

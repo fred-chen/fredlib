@@ -117,32 +117,37 @@ size_t performance_check() {
 
     // allocate a big buffer
     unsigned char* p = nullptr;
-    size_t input_size = 2ull * GB;
-    ::posix_memalign((void**)&p, 64, input_size);
-    ::mlock2(p, input_size, 0);    // lock the huge input in memory
-    ::memset(p, 255, input_size);  // touch each byte of the input
+    size_t input_size = 100ull * MB;
+    REQUIRE(::posix_memalign((void**)&p, 64, input_size) == 0);
+    ::mlock2(p, input_size, 0);  // lock the huge input in memory
+    ::srand(time(NULL));
+    for (size_t i = 0; i < input_size / sizeof(int); i++) {
+        ((int*)p)[i] =
+            ::rand();  // touch each byte of the input with random value
+    }
 
     auto key1 = HashKeyType(p, input_size);
 
     // hash this big buffer for n times
-    int n = 40;
+    size_t n = 800;
     FanInPoint fip(n);
     auto f = [p, &key1, input_size](FanInPoint& fip) {
         REQUIRE(HashKeyType(p, input_size) == key1);
         fip.done();
     };
     auto start = timer_start();
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
         pool.push_function(f, std::ref(fip));
     }
     fip.wait();
 
-    auto dur = ms_elapsed_since(start);
-    std::cout << HashKeyType().engine_name() << ": " << dur
+    auto dur = us_elapsed_since(start);
+    std::cout << HashKeyType().engine_name() << ": " << double(dur) / 1000
               << "ms for performance_check. " << std::fixed
               << std::setprecision(3)
-              << double(n * input_size / GB * 1000) / dur << "GB/s"
+              << double(n * input_size / GB * 1000000) / dur << "GB/s"
               << std::endl;
+    free(p);
     return dur;
 }
 
@@ -156,6 +161,9 @@ bool basic_check() {
     HashKeyType key1((const unsigned char*)data1, strlen(data1) + 1);
     HashKeyType key2((const unsigned char*)data2, strlen(data2) + 1);
 
+    // different input, different output
+    REQUIRE(key1 != key2);
+
     // same input, same output
     for (int i = 0; i < 1000; i++) {
         REQUIRE(HashKeyType((const unsigned char*)data1, strlen(data1) + 1) ==
@@ -164,8 +172,9 @@ bool basic_check() {
 
     // thread safety, same input in different threads
     // should return the same hash value
-    std::future<HashKeyType> futs[100];
-    for (int i = 0; i < 100; i++) {
+    const int nthreads = 100;
+    std::future<HashKeyType> futs[nthreads];
+    for (int i = 0; i < nthreads; i++) {
         futs[i] = std::async(std::launch::async, [data1]() -> HashKeyType {
             return HashKeyType((const unsigned char*)data1, strlen(data1) + 1);
         });
@@ -174,15 +183,16 @@ bool basic_check() {
         REQUIRE(fut.get() == key1);
     }
 
-    // different input, different output
-    REQUIRE(key1 != key2);
-
     // big buffer check
     unsigned char* p = nullptr;
-    size_t input_size = 100 * MB;
-    ::posix_memalign((void**)&p, 64, input_size);
-    ::mlock2(p, input_size, 0);
-    ::memset(p, 255, input_size);
+    size_t input_size = 100ull * MB;
+    REQUIRE(::posix_memalign((void**)&p, 64, input_size) == 0);
+    ::mlock2(p, input_size, 0);  // lock the huge input in memory
+    ::srand(time(NULL));
+    for (size_t i = 0; i < input_size / sizeof(int); i++) {
+        ((int*)p)[i] =
+            ::rand();  // touch each byte of the input with random value
+    }
 
     auto key3 = HashKeyType(p, input_size);
     auto key4 = HashKeyType(p, input_size);
@@ -201,11 +211,24 @@ bool basic_check() {
     auto dur = ms_elapsed_since(start);
     std::cout << HashKeyType().engine_name() << ": " << dur
               << "ms for basic_check." << std::endl;
+    free(p);
     return true;
 }
 
 TEST_CASE("engines", "[hash]") {
     performance_check<DummyHashKey>();
+
+    REQUIRE(basic_check<Blake3_256Key>());
+    REQUIRE(collision_check<Blake3_256Key>() == 0);
+    performance_check<Blake3_256Key>();
+
+    REQUIRE(basic_check<XXhash64Key>());
+    REQUIRE(collision_check<XXhash64Key>() == 0);
+    performance_check<XXhash64Key>();
+
+    REQUIRE(basic_check<City256Key>());
+    REQUIRE(collision_check<City256Key>() == 0);
+    performance_check<City256Key>();
 
     REQUIRE(basic_check<SHA1Key>());
     REQUIRE(collision_check<SHA1Key>() == 0);
@@ -242,12 +265,4 @@ TEST_CASE("engines", "[hash]") {
     REQUIRE(basic_check<SHA3_512Key>());
     REQUIRE(collision_check<SHA3_512Key>() == 0);
     performance_check<SHA3_512Key>();
-
-    REQUIRE(basic_check<Blake3_256Key>());
-    REQUIRE(collision_check<Blake3_256Key>() == 0);
-    performance_check<Blake3_256Key>();
-
-    REQUIRE(basic_check<XXhash64Key>());
-    REQUIRE(collision_check<XXhash64Key>() == 0);
-    performance_check<XXhash64Key>();
 }

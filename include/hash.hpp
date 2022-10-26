@@ -16,6 +16,7 @@
 #include <type_traits>
 
 #include "hashes/b3/blake3.h"
+#include "hashes/city/citycrc.h"
 #include "hashes/xxhash64.h"
 #include "micros.hpp"
 
@@ -40,12 +41,12 @@ public:
     HashKey() : mDigest({}){};
 
     HashKey(const unsigned char* input, const size_t len) : mDigest({}) {
-        HashEngine()(input, len, (uint8_t*)&mDigest, nbytes);
+        HashEngine::hash(input, len, (uint8_t*)&mDigest, nbytes);
     }
     template <class T, size_t size>
     HashKey(const std::array<T, size>& input) : mDigest({}) {
-        HashEngine()((const unsigned char*)input, input.size(),
-                     (uint8_t*)&mDigest);
+        HashEngine::hash((const unsigned char*)input, input.size(),
+                         (uint8_t*)&mDigest);
     }
 
     /// assignable
@@ -136,27 +137,25 @@ public:
 
     DummyHashEngine() = default;
 
-    void operator()(const unsigned char* input, size_t len, uint8_t* digest,
-                    unsigned int digest_len) {
-        UNUSED(digest);
+    static void hash(const unsigned char* input, size_t len, uint8_t* digest,
+                     unsigned int digest_len) {
+        UNUSED(input);
         UNUSED(digest_len);
 
-        // data = input[i];
-#if defined(__x86_64__)
-        __m256i v;  // for faster avx2 instructions
-        for (size_t i = 0; i < len / 32; i++) {
-            v = _mm256_load_si256(&((const __m256i*)input)[i]);
-        }
-#else
-        __uint128_t v;
+        // #if defined(__x86_64__)
+        // __m256i v;  // for faster avx2 instructions
+        // for (size_t i = 0; i < len / 32; i++) {
+        //     // v = _mm256_load_si256(&((const __m256i*)input)[i]);
+        //     _mm256_storeu_si256((__m256i*)&digest[(i % digest_len) / 32], v);
+        // }
+        // #else
         for (size_t i = 0; i < len / 16; i++) {
-            v = ((__uint128_t*)input)[i];
+            ((__uint128_t*)digest)[(i % digest_len) / 16] = __uint128_t(i);
         }
-#endif
-        UNUSED(v);
+        // #endif
     }
 
-    const char* engine_name() const { return _engine_name; }
+    static const char* engine_name() { return _engine_name; }
     friend std::ostream& operator<<(std::ostream& o,
                                     const DummyHashEngine& engine) {
         o << engine.engine_name();
@@ -170,8 +169,8 @@ private:
     static constexpr const char _engine_name[] = "Blake3Engine";
 
 public:
-    void operator()(const unsigned char* input, size_t len, uint8_t* digest,
-                    unsigned int digest_len) {
+    static void hash(const unsigned char* input, size_t len, uint8_t* digest,
+                     unsigned int digest_len) {
         // Initialize the hasher.
         static thread_local blake3_hasher hasher;
         blake3_hasher_init(&hasher);
@@ -187,7 +186,7 @@ public:
         // Finalize the hash.
         blake3_hasher_finalize(&hasher, digest, digest_len);
     }
-    const char* engine_name() const { return _engine_name; }
+    static const char* engine_name() { return _engine_name; }
 };
 static_assert(sizeof(Blake3Engine) == 1);
 
@@ -235,8 +234,8 @@ private:
     };
 
 public:
-    void operator()(const unsigned char* input, size_t len, uint8_t* digest,
-                    unsigned int digest_len) {
+    static void hash(const unsigned char* input, size_t len, uint8_t* digest,
+                     unsigned int digest_len) {
         static const size_t sha_size = EVP_MD_size(
             _algorithm_table[sha_type]());  // the size of algorithm result
         static thread_local EVP_MD_CTX* mdctx = EVP_MD_CTX_create();
@@ -268,7 +267,7 @@ public:
         // dont free the hash because the context is a shared hash engine
         // EVP_MD_CTX_destroy(mdctx);
     }
-    const char* engine_name() const { return _engine_names[sha_type]; }
+    static const char* engine_name() { return _engine_names[sha_type]; }
 };
 static_assert(sizeof(SHAEngine<>) == 1);
 
@@ -280,29 +279,48 @@ static_assert(sizeof(SHAEngine<>) == 1);
 class XXhash64Engine : public DummyHashEngine {
 private:
     static constexpr const char _engine_name[] = "XXhash64Engine";
+    static const size_t update_len = 64 * MB;
 
 public:
-    void operator()(const unsigned char* input, size_t len, uint8_t* digest,
-                    unsigned int digest_len) {
+    static void hash(const unsigned char* input, size_t len, uint8_t* digest,
+                     unsigned int digest_len) {
         // Initialize the hasher.
         XXHash64 myhash(0);
 
         // Update the hasher with data
-        // for (size_t i = 0; i < len; i += update_len) {
-        //     myhash.add(input + i, i + update_len >= len ? len - i :
-        //     update_len);
-        // }
-        myhash.add(input, len);
+        for (size_t i = 0; i < len; i += update_len) {
+            myhash.add(input + i, i + update_len >= len ? len - i : update_len);
+        }
 
         // Finalize the hash.
         if (digest_len >= sizeof(uint64_t)) {
             *((uint64_t*)digest) = myhash.hash();
         } else {
-            uint64_t result = myhash.hash();
+            static uint64_t result = myhash.hash();
             memcpy(digest, &result, digest_len);
         }
     }
-    const char* engine_name() const { return _engine_name; }
+    static const char* engine_name() { return _engine_name; }
+};
+static_assert(sizeof(XXhash64Engine) == 1);
+
+class City256Engine : public DummyHashEngine {
+private:
+    static constexpr const char _engine_name[] = "City256Engine";
+
+public:
+    static void hash(const unsigned char* input, size_t len, uint8_t* digest,
+                     unsigned int digest_len) {
+        // Finalize the hash.
+        if (digest_len >= 32) {
+            CityHashCrc256((const char*)input, len, (uint64*)digest);
+        } else {
+            static uint64 result[4];
+            CityHashCrc256((const char*)input, len, &result[0]);
+            memcpy(digest, result, digest_len);
+        }
+    }
+    static const char* engine_name() { return _engine_name; }
 };
 static_assert(sizeof(XXhash64Engine) == 1);
 
@@ -320,7 +338,7 @@ static_assert(sizeof(XXhash64Engine) == 1);
 static_assert(std::is_trivially_copyable<HashKey<DummyHashEngine>>::value,
               "HashKey is not trivially copyable.");
 
-typedef HashKey<DummyHashEngine, 20> DummyHashKey;
+typedef HashKey<DummyHashEngine, 32> DummyHashKey;
 typedef HashKey<SHAEngine<SHAEngine<>::SHA1>, 20> SHA1Key;
 typedef HashKey<SHAEngine<SHAEngine<>::SHA224>, 28> SHA224Key;
 typedef HashKey<SHAEngine<SHAEngine<>::SHA256>, 32> SHA256Key;
@@ -331,6 +349,7 @@ typedef HashKey<SHAEngine<SHAEngine<>::SHA3_256>, 32> SHA3_256Key;
 typedef HashKey<SHAEngine<SHAEngine<>::SHA3_384>, 48> SHA3_384Key;
 typedef HashKey<SHAEngine<SHAEngine<>::SHA3_512>, 64> SHA3_512Key;
 typedef HashKey<Blake3Engine, 32> Blake3_256Key;
-typedef HashKey<XXhash64Engine, 64> XXhash64Key;
+typedef HashKey<XXhash64Engine, 8> XXhash64Key;
+typedef HashKey<City256Engine, 32> City256Key;
 
 }  // namespace FRED

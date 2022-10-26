@@ -12,7 +12,7 @@ target_precompile_headers ( threading_test INTERFACE catch.hpp )
 
 add_executable ( hash_test hash_test.cpp )
 target_precompile_headers ( hash_test INTERFACE catch.hpp )
-target_link_libraries(hash_test blake3 OpenSSL::SSL)
+target_link_libraries(hash_test blake3 OpenSSL::SSL city)
 
 add_test ( NAME threading_test COMMAND threading_test )
 add_test ( NAME list_test COMMAND list_test )
