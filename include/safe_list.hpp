@@ -331,7 +331,7 @@ struct listHook {
     }
 
     /**
-     * @brief link this node after the preceding node
+     * @brief link this node before the preceding node
      *
      * @param nextNode
      */

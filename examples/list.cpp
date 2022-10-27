@@ -74,6 +74,29 @@ void safe_list_demo() {
     list.push_back(&data);
     auto p_data = (MyDataDerived*)list.pop_front();
     std::cout << "data of MyDataDerived is " << p_data->data << std::endl;  // 3
+
+    /// @brief and of course, we can always use classic C method
+    ///        by put the hook as the first member in a struct to
+    ///        reinterpret a listHook as it's container object.
+    ///
+    struct MyContainerObject {
+        listHook hook;  // if the listHook is the first member, then it's easy
+                        // to covert a list node to its container object
+        int data;
+    };
+    MyContainerObject data7{{}, 7};
+    list.push_back(reinterpret_cast<listHook*>(&data7));
+    auto p_data7 = (MyContainerObject*)list.pop_front();
+    std::cout << "data of MyContainerObject is " << p_data7->data
+              << std::endl;  // 7
+
+    /// it's fine to iterate a SafeList with iterators like a container
+    list.push_back(reinterpret_cast<listHook*>(&data7));
+    for (auto& v : list) {
+        std::cout << "data of MyContainerObject is "
+                  << reinterpret_cast<MyContainerObject*>(&v)->data
+                  << std::endl;  // 7
+    }
 }
 
 /**
